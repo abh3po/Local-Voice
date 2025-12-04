@@ -20,7 +20,7 @@ def start_listening_tool(state, play_sound_fn, sound_file):
     return "Listening resumed."
 
 
-def set_timer_tool(duration: str, message: str = "Time is up!") -> str:
+def set_timer_tool(duration: str, message: str = "Time is up!", play_response_fn=None) -> str:
     print("Action called, set_timer", duration, message)
     try:
         # parse duration string
@@ -41,7 +41,8 @@ def set_timer_tool(duration: str, message: str = "Time is up!") -> str:
 
         def timer_thread():
             time.sleep(seconds)
-            play_response(f"Timer done: {message}")
+            if play_response_fn:
+                play_response_fn(f"Timer done: {message}")
 
         threading.Thread(target=timer_thread, daemon=True).start()
         return f"Timer set for {duration}."
