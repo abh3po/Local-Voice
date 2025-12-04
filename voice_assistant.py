@@ -285,19 +285,18 @@ def query_ollama():
 def play_response(text):
     import io
     import tempfile
+    from pydub import AudioSegment
+    import subprocess
 
-    # Mute the mic during playback to avoid feedback loop
     global mic_enabled
-    mic_enabled = False  # 🔇 mute mic
+    mic_enabled = False  # mute mic during playback
 
-    # clean the response
-    clean = re.sub(r"[\*]+", '', text)                # remove asterisks
-    # remove (stage directions)
+    # Clean text
+    clean = re.sub(r"[\*]+", '', text)
     clean = re.sub(r"\(.*?\)", '', clean)
-    clean = re.sub(r"<.*?>", '', clean)               # remove HTML-style tags
-    clean = clean.replace('\n', ' ').strip()          # normalize newlines
-    clean = re.sub(r'\s+', ' ', clean)                # collapse whitespace
-    # remove emojis
+    clean = re.sub(r"<.*?>", '', clean)
+    clean = clean.replace('\n', ' ').strip()
+    clean = re.sub(r'\s+', ' ', clean)
     clean = re.sub(
         r'[\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF]+', '', clean)
 
@@ -313,28 +312,30 @@ def play_response(text):
         )
         tts_pcm, _ = piper_proc.communicate(input=clean.encode())
 
+    # 2. Convert raw PCM to WAV (mono, 16kHz)
+    pcm_to_wav = subprocess.Popen(
+        ['sox', '-t', 'raw', '-r', '16000', '-c', '1', '-b', '16',
+         '-e', 'signed-integer', '-', '-t', 'wav', '-'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL
+    )
+    tts_wav_mono, _ = pcm_to_wav.communicate(input=tts_pcm)
+
+    # 3. Convert to stereo using pydub
+    audio_segment = AudioSegment.from_file(
+        io.BytesIO(tts_wav_mono), format="wav")
+    stereo_audio = audio_segment.set_channels(2)
+    stereo_audio = stereo_audio.set_frame_rate(16000)
+
+    # 4. Optional: add noise + bandpass
     if ENABLE_AUDIO_PROCESSING:
-        # SoX timing consolidation
-        sox_start = time.time()
-
-        # 2. Convert raw PCM to WAV
-        pcm_to_wav = subprocess.Popen(
-            ['sox', '-t', 'raw', '-r', '16000', '-c', str(CHANNELS), '-b', '16',
-             '-e', 'signed-integer', '-', '-t', 'wav', '-'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
-        )
-        tts_wav_16k, _ = pcm_to_wav.communicate(input=tts_pcm)
-
-        # 3. Estimate duration
-        duration_sec = len(tts_pcm) / (RATE * 2)
-
-        # 4. Generate white noise WAV bytes
+        # Generate white noise WAV
+        duration_sec = len(tts_pcm) / (16000 * 2)
         noise_bytes = subprocess.check_output([
             'sox', '-n',
             '-r', '16000',
-            '-c', str(CHANNELS),
+            '-c', '2',
             '-b', '16',
             '-e', 'signed-integer',
             '-t', 'wav', '-',
@@ -342,12 +343,16 @@ def play_response(text):
             'whitenoise', 'vol', NOISE_LEVEL
         ], stderr=subprocess.DEVNULL)
 
-        # 5. Write both to temp files & mix
-        with tempfile.NamedTemporaryFile(suffix='.wav') as tts_file, tempfile.NamedTemporaryFile(suffix='.wav') as noise_file:
-            tts_file.write(tts_wav_16k)
-            noise_file.write(noise_bytes)
+        # Mix TTS + noise
+        with tempfile.NamedTemporaryFile(suffix='.wav') as tts_file, \
+                tempfile.NamedTemporaryFile(suffix='.wav') as noise_file:
+
+            tts_file.write(stereo_audio.export(format='wav').read())
             tts_file.flush()
+
+            noise_file.write(noise_bytes)
             noise_file.flush()
+
             mixer = subprocess.Popen(
                 ['sox', '-m', tts_file.name, noise_file.name, '-t', 'wav', '-'],
                 stdout=subprocess.PIPE,
@@ -355,9 +360,8 @@ def play_response(text):
             )
             mixed_bytes, _ = mixer.communicate()
 
-        # 6. Apply filter
+        # Apply highpass / lowpass filters
         filter_proc = subprocess.Popen(
-            # ['sox', '-t', 'wav', '-', '-t', 'wav', '-', 'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
             ['sox', '-t', 'wav', '-', '-r', '16000', '-c', '2', '-t', 'wav', '-',
              'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
             stdin=subprocess.PIPE,
@@ -366,66 +370,40 @@ def play_response(text):
         )
         final_bytes, _ = filter_proc.communicate(input=mixed_bytes)
 
-        sox_elapsed = (time.time() - sox_start) * 1000
-        print(f"[Timing] SoX (total): {int(sox_elapsed)} ms")
-
     else:
-        # No FX: just convert raw PCM to WAV
-        pcm_to_wav = subprocess.Popen(
-            ['sox', '-t', 'raw', '-r', '16000', '-c', str(CHANNELS), '-b', '16',
-             '-e', 'signed-integer', '-', '-t', 'wav', '-'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
-        )
-        tts_wav_16k, _ = pcm_to_wav.communicate(input=tts_pcm)
+        # No FX, just export stereo
+        final_buffer = io.BytesIO()
+        stereo_audio.export(final_buffer, format='wav')
+        final_bytes = final_buffer.getvalue()
 
-        resample_proc = subprocess.Popen(
-            ['sox', '-t', 'wav', '-', '-r', '16000', '-t', 'wav', '-'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
-        )
-        final_bytes, _ = resample_proc.communicate(input=tts_wav_16k)
+    # 5. Save temp file for debugging (optional)
+    with open("/tmp/test.wav", "wb") as f:
+        f.write(final_bytes)
 
-    # 7. Playback
+    # 6. Playback via PyAudio
     with Timer("Playback"):
-        with open("/tmp/test.wav", "wb") as f:
-            f.write(final_bytes)
-        print("[Debug] Dumped final_bytes to /tmp/test.wav")
-        try:
-            # wf = wave.open(io.BytesIO(final_bytes), 'rb')
+        wf = wave.open(io.BytesIO(final_bytes), 'rb')
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=pa.get_format_from_width(wf.getsampwidth()),
+            channels=wf.getnchannels(),
+            rate=wf.getframerate(),
+            output=True,
+            output_device_index=AUDIO_OUTPUT_DEVICE_INDEX
+        )
 
-            pa = pyaudio.PyAudio()
-            print("[Debug] WAV:", wf.getnchannels(), "ch",
-                  wf.getframerate(), "Hz",
-                  wf.getsampwidth() * 8, "bit")
-            wf = wave.open(io.BytesIO(final_bytes), 'rb')
-            stream = pa.open(
-                format=pa.get_format_from_width(wf.getsampwidth()),
-                channels=wf.getnchannels(),
-                rate=wf.getframerate(),
-                output=True,
-                output_device_index=AUDIO_OUTPUT_DEVICE_INDEX  # should be 0
-            )
-
+        data = wf.readframes(CHUNK)
+        while data:
+            stream.write(data)
             data = wf.readframes(CHUNK)
-            while data:
-                stream.write(data)
-                data = wf.readframes(CHUNK)
 
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
-            wf.close()
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+        wf.close()
 
-        except wave.Error as e:
-            print(f"[Error] Could not open final WAV: {e}")
-
-        finally:
-            mic_enabled = True      # 🔊 unmute mic
-            time.sleep(0.3)         # optional: small cooldown
-    # optional: small cooldown
+    mic_enabled = True
+    time.sleep(0.3)
 
 
 # ------------------- PROCESSING LOOP -------------------
