@@ -15,7 +15,7 @@ CHUNK = 1024
 text = "Hello world! This is a test of mono to stereo playback."
 
 # Run Piper to generate raw PCM
-piper_path = os.path.join(BASE_DIR, "bin", "piper", "piper")
+piper_path = os.path.join(BASE_DIR, "bin", "piper", "piper", "piper")
 piper_proc = subprocess.Popen(
     [piper_path, "--model", VOICE_MODEL, "--output_raw"],
     stdin=subprocess.PIPE,
