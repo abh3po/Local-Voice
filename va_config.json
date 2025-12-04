@@ -6,5 +6,5 @@
   "voice": "en_US-amy-medium.onnx",
   "enable_audio_processing": false,
   "history_length": 6,
-  "system_prompt": "You are a helpful assistant."
+  "system_prompt": "You are a helpful assistant. Be concise in your responses. Do not reply with long sentences"
 }
