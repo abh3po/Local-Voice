@@ -358,7 +358,7 @@ def play_response(text):
         # 6. Apply filter
         filter_proc = subprocess.Popen(
             # ['sox', '-t', 'wav', '-', '-t', 'wav', '-', 'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
-            ['sox', '-t', 'wav', '-', '-r', '48000', '-t', 'wav', '-',
+            ['sox', '-t', 'wav', '-', '-r', '16000', '-t', 'wav', '-',
              'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -381,7 +381,7 @@ def play_response(text):
         tts_wav_16k, _ = pcm_to_wav.communicate(input=tts_pcm)
 
         resample_proc = subprocess.Popen(
-            ['sox', '-t', 'wav', '-', '-r', '48000', '-t', 'wav', '-'],
+            ['sox', '-t', 'wav', '-', '-r', '16000', '-t', 'wav', '-'],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL
