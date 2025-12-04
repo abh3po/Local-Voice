@@ -287,6 +287,10 @@ def play_response(text):
     import tempfile
     from pydub import AudioSegment
     import subprocess
+    import wave
+    import pyaudio
+    import re
+    import time
 
     global mic_enabled
     mic_enabled = False  # mute mic during playback
@@ -300,38 +304,32 @@ def play_response(text):
     clean = re.sub(
         r'[\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF]+', '', clean)
 
-    piper_path = os.path.join(BASE_DIR, 'bin', 'piper', 'piper', 'piper')
+    # 1. Generate Piper WAV file directly
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_wav_file:
+        tmp_wav_path = tmp_wav_file.name
 
-    # 1. Generate Piper raw PCM
-    with Timer("Piper inference"):
-        piper_proc = subprocess.Popen(
-            [piper_path, '--model', VOICE_MODEL, '--output_raw'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
+    try:
+        subprocess.run(
+            [os.path.join(BASE_DIR, 'bin', 'piper', 'piper'),
+             '--model', VOICE_MODEL,
+             '--output_file', tmp_wav_path],
+            input=clean.encode(),
+            check=True
         )
-        tts_pcm, _ = piper_proc.communicate(input=clean.encode())
+    except subprocess.CalledProcessError as e:
+        print("[Warning] Piper TTS failed:", e)
+        mic_enabled = True
+        return
 
-    # 2. Convert raw PCM to WAV (mono, 16kHz)
-    pcm_to_wav = subprocess.Popen(
-        ['sox', '-t', 'raw', '-r', '16000', '-c', '1', '-b', '16',
-         '-e', 'signed-integer', '-', '-t', 'wav', '-'],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL
-    )
-    tts_wav_mono, _ = pcm_to_wav.communicate(input=tts_pcm)
-
-    # 3. Convert to stereo using pydub
-    audio_segment = AudioSegment.from_file(
-        io.BytesIO(tts_wav_mono), format="wav")
+    # 2. Convert to stereo using pydub
+    audio_segment = AudioSegment.from_file(tmp_wav_path, format="wav")
     stereo_audio = audio_segment.set_channels(2)
     stereo_audio = stereo_audio.set_frame_rate(16000)
 
-    # 4. Optional: add noise + bandpass
+    # 3. Optional: add noise + bandpass
     if ENABLE_AUDIO_PROCESSING:
         # Generate white noise WAV
-        duration_sec = len(tts_pcm) / (16000 * 2)
+        duration_sec = len(stereo_audio) / 1000.0  # pydub length in ms
         noise_bytes = subprocess.check_output([
             'sox', '-n',
             '-r', '16000',
@@ -347,9 +345,7 @@ def play_response(text):
         with tempfile.NamedTemporaryFile(suffix='.wav') as tts_file, \
                 tempfile.NamedTemporaryFile(suffix='.wav') as noise_file:
 
-            tts_file.write(stereo_audio.export(format='wav').read())
-            tts_file.flush()
-
+            stereo_audio.export(tts_file.name, format='wav')
             noise_file.write(noise_bytes)
             noise_file.flush()
 
@@ -376,11 +372,11 @@ def play_response(text):
         stereo_audio.export(final_buffer, format='wav')
         final_bytes = final_buffer.getvalue()
 
-    # 5. Save temp file for debugging (optional)
+    # 4. Save temp file for debugging (optional)
     with open("/tmp/test.wav", "wb") as f:
         f.write(final_bytes)
 
-    # 6. Playback via PyAudio
+    # 5. Playback via PyAudio
     with Timer("Playback"):
         wf = wave.open(io.BytesIO(final_bytes), 'rb')
         pa = pyaudio.PyAudio()
