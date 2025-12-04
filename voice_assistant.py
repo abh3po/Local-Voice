@@ -380,35 +380,35 @@ def play_response(text):
         ], stderr=subprocess.DEVNULL)
 
         # Mix TTS + noise
-        with tempfile.NamedTemporaryFile(suffix='.wav') as tts_file,
-                tempfile.NamedTemporaryFile(suffix='.wav') as noise_file:
+        with (tempfile.NamedTemporaryFile(suffix='.wav') as tts_file,
+              tempfile.NamedTemporaryFile(suffix='.wav') as noise_file):
 
             stereo_audio.export(tts_file.name, format='wav')
             noise_file.write(noise_bytes)
             noise_file.flush()
 
-            mixer= subprocess.Popen(
+            mixer = subprocess.Popen(
                 ['sox', '-m', tts_file.name, noise_file.name, '-t', 'wav', '-'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL
             )
-            mixed_bytes, _= mixer.communicate()
+            mixed_bytes, _ = mixer.communicate()
 
         # Apply highpass / lowpass filters
-        filter_proc= subprocess.Popen(
+        filter_proc = subprocess.Popen(
             ['sox', '-t', 'wav', '-', '-r', '16000', '-c', '2', '-t', 'wav', '-',
              'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL
         )
-        final_bytes, _= filter_proc.communicate(input=mixed_bytes)
+        final_bytes, _ = filter_proc.communicate(input=mixed_bytes)
 
     else:
         # No FX, just export stereo
-        final_buffer= io.BytesIO()
+        final_buffer = io.BytesIO()
         stereo_audio.export(final_buffer, format='wav')
-        final_bytes= final_buffer.getvalue()
+        final_bytes = final_buffer.getvalue()
 
     # 4. Save temp file for debugging (optional)
     with open("/tmp/test.wav", "wb") as f:
@@ -416,9 +416,9 @@ def play_response(text):
 
     # 5. Playback via PyAudio
     with Timer("Playback"):
-        wf= wave.open(io.BytesIO(final_bytes), 'rb')
-        pa= pyaudio.PyAudio()
-        stream= pa.open(
+        wf = wave.open(io.BytesIO(final_bytes), 'rb')
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
             format=pa.get_format_from_width(wf.getsampwidth()),
             channels=wf.getnchannels(),
             rate=wf.getframerate(),
@@ -426,17 +426,17 @@ def play_response(text):
             output_device_index=AUDIO_OUTPUT_DEVICE_INDEX
         )
 
-        data= wf.readframes(CHUNK)
+        data = wf.readframes(CHUNK)
         while data:
             stream.write(data)
-            data= wf.readframes(CHUNK)
+            data = wf.readframes(CHUNK)
 
         stream.stop_stream()
         stream.close()
         pa.terminate()
         wf.close()
 
-    mic_enabled= True
+    mic_enabled = True
     time.sleep(0.3)
 
 
@@ -450,17 +450,17 @@ def handle_llm_response(resp_text):
         "action":"tool","tool_name":"...","parameters":{...}}
     """
     try:
-        resp_json= json.loads(resp_text)
-        action= resp_json.get("action")
+        resp_json = json.loads(resp_text)
+        action = resp_json.get("action")
 
         if action == "speak":
             play_response(resp_json["text"])
         elif action == "tool":
-            tool_name= resp_json.get("tool_name")
-            params= resp_json.get("parameters", {})
-            tool= TOOLS.get(tool_name)
+            tool_name = resp_json.get("tool_name")
+            params = resp_json.get("parameters", {})
+            tool = TOOLS.get(tool_name)
             if tool:
-                result= tool(**params)
+                result = tool(**params)
                 play_response(result)
             else:
                 play_response(f"I don't know that tool: {tool_name}")
@@ -470,19 +470,19 @@ def handle_llm_response(resp_text):
 
 
 def processing_loop():
-    model= Model(MODEL_PATH)
-    rec= KaldiRecognizer(model, 16000)
-    MAX_DEBUG_LEN= 200
-    LOW_EFFORT_UTTERANCES= {"huh", "uh", "um", "erm", "hmm", "he's", "but"}
+    model = Model(MODEL_PATH)
+    rec = KaldiRecognizer(model, 16000)
+    MAX_DEBUG_LEN = 200
+    LOW_EFFORT_UTTERANCES = {"huh", "uh", "um", "erm", "hmm", "he's", "but"}
 
     while True:
-        data= audio_queue.get()
+        data = audio_queue.get()
         if rec.AcceptWaveform(data):
-            start= time.time()
-            r= json.loads(rec.Result())
-            elapsed_ms= int((time.time() - start) * 1000)
+            start = time.time()
+            r = json.loads(rec.Result())
+            elapsed_ms = int((time.time() - start) * 1000)
 
-            user= r.get('text', '').strip().lower()
+            user = r.get('text', '').strip().lower()
             if not user:
                 continue
 
@@ -500,19 +500,19 @@ def processing_loop():
             # Ignore low-effort utterances
             if user in LOW_EFFORT_UTTERANCES:
                 print("[Debug] Ignored low-effort utterance.")
-                rec= KaldiRecognizer(model, 16000)
+                rec = KaldiRecognizer(model, 16000)
                 continue
 
             # Append user message
             messages.append({"role": "user", "content": user})
 
             # Query LLM
-            resp_text= query_ollama()
+            resp_text = query_ollama()
             if resp_text:
-                clean_debug_text= resp_text.replace(
+                clean_debug_text = resp_text.replace(
                     '\n', ' ').replace('\r', ' ')
                 if len(clean_debug_text) > MAX_DEBUG_LEN:
-                    clean_debug_text= clean_debug_text[:MAX_DEBUG_LEN] + '...'
+                    clean_debug_text = clean_debug_text[:MAX_DEBUG_LEN] + '...'
 
                 print("Assistant:", clean_debug_text)
                 messages.append(
@@ -525,18 +525,18 @@ def processing_loop():
                 print('[Debug] Empty response, skipping TTS.')
 
             # Reset recognizer after each interaction
-            rec= KaldiRecognizer(model, 16000)
+            rec = KaldiRecognizer(model, 16000)
 
 
 def get_tools_description(tools_dict):
     """
     Returns a list of tool descriptions for the LLM, including name, parameters, and docstring.
     """
-    tool_descriptions= []
+    tool_descriptions = []
     for tool_name, tool_fn in tools_dict.items():
         # Get parameter names from function signature
-        sig= inspect.signature(tool_fn)
-        params= []
+        sig = inspect.signature(tool_fn)
+        params = []
         for param in sig.parameters.values():
             # record parameter name, default if exists, and annotation if exists
             params.append({
@@ -558,10 +558,10 @@ def get_tools_description(tools_dict):
 
 
 def list_output_devices():
-    pa= pyaudio.PyAudio()
+    pa = pyaudio.PyAudio()
     print("[Debug] Available OUTPUT devices:")
     for i in range(pa.get_device_count()):
-        info= pa.get_device_info_by_index(i)
+        info = pa.get_device_info_by_index(i)
         if info['maxOutputChannels'] > 0:
             print(
                 f"  {i}: {info['name']} ({int(info['defaultSampleRate'])} Hz, {info['maxOutputChannels']}ch)")
@@ -570,8 +570,8 @@ def list_output_devices():
 
 if __name__ == '__main__':
     list_output_devices()
-    pa, stream= start_stream()
-    t= threading.Thread(target=processing_loop, daemon=True)
+    pa, stream = start_stream()
+    t = threading.Thread(target=processing_loop, daemon=True)
     t.start()
     try:
         while stream.is_active():
