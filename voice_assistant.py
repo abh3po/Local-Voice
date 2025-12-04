@@ -176,6 +176,7 @@ BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, 'vosk-model', 'vosk-model-en-in-0.5')
 CHAT_URL = 'http://192.168.1.2:11434/api/chat'
 mic_enabled = True
+wake_only_mode = False
 
 # ------------------- CONFIG FILE LOADING -------------------
 state = {"mic_enabled": mic_enabled, "wake_only_mode": wake_only_mode}
