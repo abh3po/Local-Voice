@@ -128,7 +128,7 @@ def set_output_volume(volume_level, card_id=3):
 CONFIG_PATH = os.path.expanduser("va_config.json")
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, 'vosk-model')
-CHAT_URL = 'http://localhost:11434/api/chat'
+CHAT_URL = 'http://192.168.1.2:11434/api/chat'
 
 # ------------------- CONFIG FILE LOADING -------------------
 
@@ -163,7 +163,8 @@ config = load_config()
 VOLUME = config["volume"]
 MIC_NAME = config["mic_name"]
 AUDIO_OUTPUT_DEVICE = config["audio_output_device"]
-AUDIO_OUTPUT_DEVICE_INDEX = get_output_device_index(config["audio_output_device"])
+#AUDIO_OUTPUT_DEVICE_INDEX = get_output_device_index(config["audio_output_device"])
+AUDIO_OUTPUT_DEVICE_INDEX = 0
 OUTPUT_CARD = parse_card_number(AUDIO_OUTPUT_DEVICE)
 MODEL_NAME = config["model_name"]
 VOICE_MODEL = os.path.join("voices", config["voice"])
@@ -246,6 +247,7 @@ def query_ollama():
         resp = requests.post(CHAT_URL, json=payload)
     #print(f'[Debug] Ollama status: {resp.status_code}')
     data = resp.json()
+    print("Ollama data is", data, MODEL_NAME, messages)
     # Extract assistant message
     reply = ''
     if 'message' in data and 'content' in data['message']:
@@ -273,7 +275,7 @@ def play_response(text):
     clean = re.sub(r'\s+', ' ', clean)                # collapse whitespace
     clean = re.sub(r'[\U0001F300-\U0001FAFF\u2600-\u26FF\u2700-\u27BF]+', '', clean)  # remove emojis
 
-    piper_path = os.path.join(BASE_DIR, 'bin', 'piper', 'piper')
+    piper_path = os.path.join(BASE_DIR, 'bin', 'piper', 'piper', 'piper')
 
     # 1. Generate Piper raw PCM
     with Timer("Piper inference"):
@@ -363,31 +365,39 @@ def play_response(text):
     # 7. Playback
     with Timer("Playback"):
         try:
-            wf = wave.open(io.BytesIO(final_bytes), 'rb')
+            import soundfile as sf
+            import numpy as np
+            print("FINAL BYTES", final_bytes)
+            # Read all WAV frames from memory
+            #raw_data = wf.readframes(wf.getnframes())
 
+#            pa = pyaudio.PyAudio()
+            #print("Rate ISSS", wf.getframerate(), AUDIO_OUTPUT_DEVICE_INDEX)
+ #           stream = pa.open(
+                #format=pa.get_format_from_width(wf.getsampwidth()),
+  #              format=pyaudio.paInt16,
+   #             channels=1,
+    #            rate=48000,
+     #           output=True,
+       #         output_device_index=AUDIO_OUTPUT_DEVICE_INDEX
+      #     )
 
-            pa = pyaudio.PyAudio()
-            stream = pa.open(
-                format=pa.get_format_from_width(wf.getsampwidth()),
-                channels=wf.getnchannels(),
-                rate=wf.getframerate(),
-                output=True,
-                output_device_index=AUDIO_OUTPUT_DEVICE_INDEX
-            )
+       #     stream.write(final_bytes)
+    #    stream.stop_stream()
+     #  stream.close()
+      #      pa.terminate()
 
-            data = wf.readframes(CHUNK)
-            while data:
-                stream.write(data)
-                data = wf.readframes(CHUNK)
-
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
-            wf.close()
-
-        except wave.Error as e:
-            print(f"[Error] Could not open final WAV: {e}")
+       # except wave.Error as e:
+        #    print(f"[Error] Could not open final WAV: {e}")
         
+            import wave
+            import io
+            import sounddevice as sd
+
+            wf = wave.open(io.BytesIO(final_bytes), 'rb')
+            data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+            sd.play(data, samplerate=wf.getframerate())
+            sd.wait()        
         finally:
             mic_enabled = True      # 🔊 unmute mic
             time.sleep(0.3)         # optional: small cooldown
@@ -433,6 +443,7 @@ def processing_loop():
                     messages.append({"role": "assistant", "content": clean_debug_text})
 
                     # TTS generation + playback
+                    print("[Debug] Text to speak:", repr(resp_text))
                     play_response(resp_text)
                 else:
                     print('[Debug] Empty response, skipping TTS.')
