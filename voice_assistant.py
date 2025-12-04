@@ -394,6 +394,9 @@ def play_response(text):
             wf = wave.open(io.BytesIO(final_bytes), 'rb')
 
             pa = pyaudio.PyAudio()
+            print("[Debug] WAV:", wf.getnchannels(), "ch",
+                  wf.getframerate(), "Hz",
+                  wf.getsampwidth() * 8, "bit")
             stream = pa.open(
                 format=pa.get_format_from_width(wf.getsampwidth()),
                 channels=wf.getnchannels(),
