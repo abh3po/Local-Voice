@@ -4,19 +4,17 @@ import time
 import re
 
 
-def stop_listening_tool(state):
-    print("Action called")
-    state["mic_enabled"] = False
-    state["wake_only_mode"] = True
-    return "Stopped listening. Say 'start listening' to resume."
+def stop_listening_tool():
+    """Switch to wake-only mode, but keep mic live for wake word."""
+    global LISTEN_MODE
+    LISTEN_MODE = "passive"
+    return "Stopped listening. Say 'hey assistant' to resume."
 
 
-def start_listening_tool(state, play_sound_fn, sound_file):
-    print("Action called")
-    state["mic_enabled"] = True
-    state["wake_only_mode"] = False
-    threading.Thread(target=play_sound_fn, args=(
-        sound_file,), daemon=True).start()
+def start_listening_tool():
+    """Immediately switch to active mode."""
+    global LISTEN_MODE
+    LISTEN_MODE = "active"
     return "Listening resumed."
 
 

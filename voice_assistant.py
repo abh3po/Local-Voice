@@ -270,9 +270,10 @@ audio_queue = queue.Queue()
 
 
 def audio_callback(in_data, frame_count, time_info, status):
+    global mic_enabled
     resampled_data = resample_audio(
         in_data, orig_rate=48000, target_rate=16000)
-    if state["mic_enabled"] or state["wake_only_mode"]:
+    if mic_enabled:
         audio_queue.put(resampled_data)
     return (None, pyaudio.paContinue)
 
@@ -470,6 +471,15 @@ def handle_llm_response(resp_text):
 
 
 def processing_loop():
+    if LISTEN_MODE == "passive":
+        if WAKE_PHRASE in user:
+            print("[Debug] Wake phrase detected. Activating listening.")
+            LISTEN_MODE = "active"
+            play_response("I'm listening now")
+            return
+        else:
+            continue  # ignore all other speech
+
     model = Model(MODEL_PATH)
     rec = KaldiRecognizer(model, 16000)
     MAX_DEBUG_LEN = 200
@@ -485,13 +495,6 @@ def processing_loop():
             user = r.get('text', '').strip().lower()
             if not user:
                 continue
-
-            # WAKE WORD HANDLING
-            if wake_only_mode:
-                if WAKE_PHRASE in user:
-                    print("[Debug] Wake phrase detected. Activating listening.")
-                    start_listening_tool()  # plays sound and switches mode
-                continue  # ignore everything else in passive mode
 
             # Debug STT timing
             print(f"[Timing] STT parse: {elapsed_ms} ms")
