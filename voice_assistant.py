@@ -397,7 +397,7 @@ def play_response(text):
             stream = pa.open(
                 format=pa.get_format_from_width(wf.getsampwidth()),
                 channels=wf.getnchannels(),
-                rate=wf.getframerate(),
+                rate=16000,
                 output=True,
                 output_device_index=AUDIO_OUTPUT_DEVICE_INDEX
             )
