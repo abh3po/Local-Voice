@@ -358,7 +358,7 @@ def play_response(text):
         # 6. Apply filter
         filter_proc = subprocess.Popen(
             # ['sox', '-t', 'wav', '-', '-t', 'wav', '-', 'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
-            ['sox', '-t', 'wav', '-', '-r', '16000', '-t', 'wav', '-',
+            ['sox', '-t', 'wav', '-', '-r', '16000', '-c', '2', '-t', 'wav', '-',
              'highpass', BANDPASS_HIGHPASS, 'lowpass', BANDPASS_LOWPASS],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -390,19 +390,23 @@ def play_response(text):
 
     # 7. Playback
     with Timer("Playback"):
+        with open("/tmp/test.wav", "wb") as f:
+            f.write(final_bytes)
+        print("[Debug] Dumped final_bytes to /tmp/test.wav")1
         try:
-            wf = wave.open(io.BytesIO(final_bytes), 'rb')
+            # wf = wave.open(io.BytesIO(final_bytes), 'rb')
 
             pa = pyaudio.PyAudio()
             print("[Debug] WAV:", wf.getnchannels(), "ch",
                   wf.getframerate(), "Hz",
                   wf.getsampwidth() * 8, "bit")
+            wf = wave.open(io.BytesIO(final_bytes), 'rb')
             stream = pa.open(
                 format=pa.get_format_from_width(wf.getsampwidth()),
                 channels=wf.getnchannels(),
-                rate=16000,
+                rate=wf.getframerate(),
                 output=True,
-                output_device_index=AUDIO_OUTPUT_DEVICE_INDEX
+                output_device_index=AUDIO_OUTPUT_DEVICE_INDEX  # should be 0
             )
 
             data = wf.readframes(CHUNK)
