@@ -310,7 +310,7 @@ def play_response(text):
 
     try:
         subprocess.run(
-            [os.path.join(BASE_DIR, 'bin', 'piper', 'piper'),
+            [os.path.join(BASE_DIR, 'bin', 'piper', 'piper', 'piper'),
              '--model', VOICE_MODEL,
              '--output_file', tmp_wav_path],
             input=clean.encode(),
