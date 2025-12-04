@@ -3,7 +3,7 @@
   "mic_name": "Plantronics",
   "audio_output_device": "plughw:0,0",
   "model_name": "qwen2.5:latest",
-  "voice": "en_US-amy-medium.onnx ",
+  "voice": "en_US-amy-medium.onnx",
   "enable_audio_processing": false,
   "history_length": 6,
   "system_prompt": "You are a helpful assistant."
