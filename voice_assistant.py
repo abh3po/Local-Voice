@@ -392,7 +392,7 @@ def play_response(text):
     with Timer("Playback"):
         with open("/tmp/test.wav", "wb") as f:
             f.write(final_bytes)
-        print("[Debug] Dumped final_bytes to /tmp/test.wav")1
+        print("[Debug] Dumped final_bytes to /tmp/test.wav")
         try:
             # wf = wave.open(io.BytesIO(final_bytes), 'rb')
 
