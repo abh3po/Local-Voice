@@ -142,7 +142,7 @@ def set_output_volume(volume_level, card_id=3):
 
 CONFIG_PATH = os.path.expanduser("va_config.json")
 BASE_DIR = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(BASE_DIR, 'vosk-model')
+MODEL_PATH = os.path.join(BASE_DIR, 'vosk-model', 'vosk-model-en-in-0.5')
 CHAT_URL = 'http://192.168.1.2:11434/api/chat'
 
 # ------------------- CONFIG FILE LOADING -------------------

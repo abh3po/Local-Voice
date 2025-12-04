@@ -1,5 +1,5 @@
 {
-  "volume": 10,
+  "volume": 7,
   "mic_name": "Plantronics",
   "audio_output_device": "plughw:0,0",
   "model_name": "qwen2.5:latest",
