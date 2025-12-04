@@ -36,6 +36,8 @@ import requests
 from pydub import AudioSegment
 import soxr
 import numpy as np
+from tools import stop_listening_tool, start_listening_tool, set_timer_tool
+import inspect
 
 # ------------------- TIMING UTILITY -------------------
 
@@ -58,6 +60,35 @@ class Timer:
         self.enabled = False
 
 # ------------------- FUNCTIONS -------------------
+
+
+def get_system_prompt(tools_dict):
+    """
+    Generates a system prompt describing available tools to the LLM dynamically.
+    """
+    tool_descriptions = []
+    for tool_name, tool_fn in tools_dict.items():
+        sig = inspect.signature(tool_fn)
+        params = [p.name for p in sig.parameters.values()]
+        doc = tool_fn.__doc__ or "No description provided."
+        tool_descriptions.append({
+            "name": tool_name,
+            "parameters": params,
+            "description": doc
+        })
+
+    prompt = (
+        "You are an AI assistant. You can use the following tools:\n"
+        f"{json.dumps(tool_descriptions, indent=2)}\n\n"
+        "When you want to call a tool, respond in JSON format like:\n"
+        '{"action": "tool", "tool_name": "set_timer", "parameters": {"duration": "5 minutes", "message": "Break is over"}}\n'
+        "Otherwise, to speak to the user, respond:\n"
+        '{"action": "speak", "text": "Hello, how can I help?"}'
+    )
+    return prompt
+
+
+# Generate the system prompt dynamically
 
 
 def get_input_device_index(preferred_name="Shure MVX2U"):
@@ -144,8 +175,16 @@ CONFIG_PATH = os.path.expanduser("va_config.json")
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, 'vosk-model', 'vosk-model-en-in-0.5')
 CHAT_URL = 'http://192.168.1.2:11434/api/chat'
+mic_enabled = True
 
 # ------------------- CONFIG FILE LOADING -------------------
+state = {"mic_enabled": mic_enabled, "wake_only_mode": wake_only_mode}
+
+TOOLS = {
+    "stop_listening": lambda: stop_listening_tool(state),
+    "start_listening": lambda: start_listening_tool(state, play_sound, LISTEN_SOUND),
+    "set_timer": set_timer_tool
+}
 
 DEFAULT_CONFIG = {
     "volume": 9,
@@ -155,7 +194,7 @@ DEFAULT_CONFIG = {
     "voice": "en_US-kathleen-low.onnx",
     "enable_audio_processing": False,
     "history_length": 4,
-    "system_prompt": "You are a helpful assistant."
+    "system_prompt": get_system_prompt(TOOLS)
 }
 
 
@@ -187,18 +226,18 @@ MODEL_NAME = config["model_name"]
 VOICE_MODEL = os.path.join("voices", config["voice"])
 ENABLE_AUDIO_PROCESSING = config["enable_audio_processing"]
 HISTORY_LENGTH = config["history_length"]
+SYSTEM_PROMPT = get_system_prompt(TOOLS)
 
 # Set system volume
 set_output_volume(VOLUME, OUTPUT_CARD)
 
 # Setup messages with system prompt
-messages = [{"role": "system", "content": config["system_prompt"]}]
+messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
 list_input_devices()
 RATE = 48000
 CHUNK = 1024
 CHANNELS = 1
-mic_enabled = True
 DEVICE_INDEX = get_input_device_index()
 
 # SOUND EFFECTS
@@ -230,12 +269,14 @@ audio_queue = queue.Queue()
 
 
 def audio_callback(in_data, frame_count, time_info, status):
-    global mic_enabled
-    if not mic_enabled:
-        return (None, pyaudio.paContinue)
+    global mic_enabled, wake_only_mode
     resampled_data = resample_audio(
         in_data, orig_rate=48000, target_rate=16000)
-    audio_queue.put(resampled_data)
+
+    # Always queue audio in passive mode for wake word detection
+    if mic_enabled or wake_only_mode:
+        audio_queue.put(resampled_data)
+
     return (None, pyaudio.paContinue)
 
 # ------------------- STREAM SETUP -------------------
@@ -404,53 +445,116 @@ def play_response(text):
 
 # ------------------- PROCESSING LOOP -------------------
 
+
+def handle_llm_response(resp_text):
+    """
+    Expects JSON output from LLM in form:
+    {"action":"speak","text":"..."} or {"action":"tool","tool_name":"...","parameters":{...}}
+    """
+    try:
+        resp_json = json.loads(resp_text)
+        action = resp_json.get("action")
+
+        if action == "speak":
+            play_response(resp_json["text"])
+        elif action == "tool":
+            tool_name = resp_json.get("tool_name")
+            params = resp_json.get("parameters", {})
+            tool = TOOLS.get(tool_name)
+            if tool:
+                result = tool(**params)
+                play_response(result)
+            else:
+                play_response(f"I don't know that tool: {tool_name}")
+    except Exception as e:
+        print("[Warning] Failed to parse LLM JSON:", e)
+        play_response(resp_text)
+
+
 def processing_loop():
     model = Model(MODEL_PATH)
-    # rec = KaldiRecognizer(model, RATE)
     rec = KaldiRecognizer(model, 16000)
-    MAX_DEBUG_LEN = 200  # optional: limit length of debug output
+    MAX_DEBUG_LEN = 200
     LOW_EFFORT_UTTERANCES = {"huh", "uh", "um", "erm", "hmm", "he's", "but"}
 
     while True:
         data = audio_queue.get()
-
         if rec.AcceptWaveform(data):
             start = time.time()
             r = json.loads(rec.Result())
             elapsed_ms = int((time.time() - start) * 1000)
 
-            user = r.get('text', '').strip()
-            if user:
-                print(f"[Timing] STT parse: {elapsed_ms} ms")
-                print("User:", user)
+            user = r.get('text', '').strip().lower()
+            if not user:
+                continue
 
-                if user.lower().strip(".,!? ") in LOW_EFFORT_UTTERANCES:
-                    print("[Debug] Ignored low-effort utterance.")
-                    rec = KaldiRecognizer(model, 16000)
-                    continue  # Skip LLM response + TTS for accidental noise
+            # WAKE WORD HANDLING
+            if wake_only_mode:
+                if WAKE_PHRASE in user:
+                    print("[Debug] Wake phrase detected. Activating listening.")
+                    start_listening_tool()  # plays sound and switches mode
+                continue  # ignore everything else in passive mode
 
-                messages.append({"role": "user", "content": user})
-                # Generate assistant response
-                resp_text = query_ollama()
-                if resp_text:
-                    # Clean debug print (remove newlines and carriage returns)
-                    clean_debug_text = resp_text.replace(
-                        '\n', ' ').replace('\r', ' ')
-                    if len(clean_debug_text) > MAX_DEBUG_LEN:
-                        clean_debug_text = clean_debug_text[:MAX_DEBUG_LEN] + '...'
+            # Debug STT timing
+            print(f"[Timing] STT parse: {elapsed_ms} ms")
+            print("User:", user)
 
-                    print('Assistant:', clean_debug_text)
-                    messages.append(
-                        {"role": "assistant", "content": clean_debug_text})
-
-                    # TTS generation + playback
-                    print("[Debug] Text to speak:", repr(resp_text))
-                    play_response(resp_text)
-                else:
-                    print('[Debug] Empty response, skipping TTS.')
-
-                # Reset recognizer after each full interaction
+            # Ignore low-effort utterances
+            if user in LOW_EFFORT_UTTERANCES:
+                print("[Debug] Ignored low-effort utterance.")
                 rec = KaldiRecognizer(model, 16000)
+                continue
+
+            # Append user message
+            messages.append({"role": "user", "content": user})
+
+            # Query LLM
+            resp_text = query_ollama()
+            if resp_text:
+                clean_debug_text = resp_text.replace(
+                    '\n', ' ').replace('\r', ' ')
+                if len(clean_debug_text) > MAX_DEBUG_LEN:
+                    clean_debug_text = clean_debug_text[:MAX_DEBUG_LEN] + '...'
+
+                print("Assistant:", clean_debug_text)
+                messages.append(
+                    {"role": "assistant", "content": clean_debug_text})
+
+                # Handle JSON action / tool commands
+                handle_llm_response(resp_text)
+
+            else:
+                print('[Debug] Empty response, skipping TTS.')
+
+            # Reset recognizer after each interaction
+            rec = KaldiRecognizer(model, 16000)
+
+
+def get_tools_description(tools_dict):
+    """
+    Returns a list of tool descriptions for the LLM, including name, parameters, and docstring.
+    """
+    tool_descriptions = []
+    for tool_name, tool_fn in tools_dict.items():
+        # Get parameter names from function signature
+        sig = inspect.signature(tool_fn)
+        params = []
+        for param in sig.parameters.values():
+            # record parameter name, default if exists, and annotation if exists
+            params.append({
+                "name": param.name,
+                "default": param.default if param.default is not inspect.Parameter.empty else None,
+                "type": str(param.annotation) if param.annotation is not inspect.Parameter.empty else "str"
+            })
+
+        tool_descriptions.append({
+            "name": tool_name,
+            "parameters": params,
+            "description": tool_fn.__doc__ or "No description provided."
+        })
+
+    return tool_descriptions
+
 
 # ------------------- MAIN -------------------
 
